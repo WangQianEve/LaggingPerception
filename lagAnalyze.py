@@ -4,8 +4,18 @@ import os
 import matplotlib  
 import matplotlib.pyplot as plt  
 
-filepath = "./data/"
+filepath = "./data/pilot2-test/"
 output = 'pilot.csv'
+
+colNames = ['filename','age','gender','contact','screen x','screen y',
+			'type','direction','speed','task id','lag type',
+			'redos','total time','num of lags','longest time',
+			'fastest speed','longest speed','longest state',
+			'experience','have lag','rate',
+			'positions','times',
+			]
+line = [None for i in colNames]
+
 DEBUG = False
 DRAW = False
 
@@ -21,128 +31,90 @@ SWIPE = 2
 
 JUMP = 1
 DELAY = 0
-DEBUG = True
 
 TOUCH = 1
 FLING = 2
 
 # configs
-list_item_heights = [427, 812, 430, 812, 354, 551, 342, 672, 266, 423, 417, 748, 466, 911, 252, 902, 349, 515]
-list_item_ac_heights = [0, 427, 1239, 1669, 2481, 2835, 3386, 3728, 4400, 4666, 5089, 5506, 6254, 6720, 7631, 7883, 8785, 9134]
-list_item_count = len(list_item_ac_heights)
-list_item_total_heights = 9649
+# list_item_heights = [427, 812, 430, 812, 354, 551, 342, 672, 266, 423, 417, 748, 466, 911, 252, 902, 349, 515]
+# list_item_ac_heights = [0, 427, 1239, 1669, 2481, 2835, 3386, 3728, 4400, 4666, 5089, 5506, 6254, 6720, 7631, 7883, 8785, 9134]
+# list_item_count = len(list_item_ac_heights)
+# list_item_total_heights = 9649
 
-def deduplicate(org_display_times, org_display_values, org_display_firsts):
+def deduplicate(org_display_times, org_display_values):
 	display_times = [org_display_times[0]]
 	display_values = [org_display_values[0]]
-	display_firsts = [org_display_firsts[0]]
 	for i in range(1,len(org_display_times)):
 		if org_display_times[i] == org_display_times[i-1]:
 			display_values[-1] = org_display_values[i]
-			display_firsts[-1] = org_display_firsts[i]
 		else:
 			display_times.append(org_display_times[i])
 			display_values.append(org_display_values[i])
-			display_firsts.append(org_display_firsts[i])
-	return (display_times, display_values, display_firsts)
+	return (display_times, display_values)
 
-# for scroll
-# 7 not 8
-def analyzeScroll(scroll_result) :
-	global out, participant_age, participant_gender
-	global image_count
-
-	lag_positions = scroll_result['actual lag positions'] if scroll_result.has_key('actual lag positions') else []
-	lag_times = scroll_result['actual lag times'] if scroll_result.has_key('actual lag times') else []
-	scroll_states = scroll_result['scroll state']
-	scroll_state_times = scroll_result['scroll state time']
-	task_direction = scroll_result['task direction']
-	display_times, display_values, display_firsts = deduplicate(scroll_result['display time'], scroll_result['display value'], scroll_result['display first item'])
-
-	# write basic
-	out.write(str(scroll_result['task id'])+',')
-	out.write(str(participant_age)+',')
-	out.write(str(participant_gender)+',')
-	out.write('scroll,')
-	out.write(str(task_direction)+',')
-	out.write(str(scroll_result['feedback'])+',')
-	out.write('\"'+str(lag_positions)+'\"'+',')
-	out.write('\"'+str(lag_times)+'\"'+',')
-
-	# no lag
-	if len(lag_positions) == 0: 
-		out.write('0,0,0,0,0,0,0,null,null')
-		return
-
-	total_time = sum(lag_times)
-	longgest = max(lag_times)
-	longgest_pos = lag_positions[lag_times.index(longgest)]
-	out.write(str(total_time)+',')
-	out.write(str(len(lag_times))+',')
-	out.write(str(longgest_pos)+',')
-	out.write(str(longgest)+',')
-
+def trim(display_times, display_values, state_times, state_values, lag_positions, lag_times):
 	target_start = lag_positions[0]
 	target_end = lag_positions[-1] + lag_times[-1]
 
 	# find state times
-	start_time = [scroll_state_times[i] for i in range(len(scroll_states)) if (scroll_states[i] == TOUCH) and (scroll_state_times[i] <= target_start)][-1]
-	end_time = [scroll_state_times[i] for i in range(len(scroll_states)) if (scroll_states[i] != FLING) and (scroll_state_times[i] >= target_end)][-1]
+	states_before = [state_times[i] for i in range(len(state_values)) if (state_values[i] == TOUCH) and (state_times[i] <= target_start)]
+	states_after = [state_times[i] for i in range(len(state_values)) if (state_values[i] != FLING) and (state_times[i] >= target_end)]
+	start_time = states_before[-1]
+	end_time = states_after[0]
+	state_start_index = len(states_before) - 1
+	state_end_index = len(state_values) - len(states_after) + 1
+	action_state_times = state_times[state_start_index:state_end_index]
+	action_state_values = state_values[state_start_index:state_end_index]
 
 	# find display indexes
 	display_start_index = len([i for i in display_times if i < start_time]) # start from time >= first lag
 	display_end_index = len([i for i in display_times if i <= end_time]) # end at time <= last lag (default: open closure)
 
 	action_time = display_times[display_start_index:display_end_index]
-	action_value = [( (display_firsts[i] / list_item_count) * list_item_total_heights + list_item_ac_heights[(display_firsts[i] % list_item_count)] - display_values[i]) for i in range(display_start_index, display_end_index)]
+	action_value = display_values[display_start_index:display_end_index]
 
+	return action_time, action_value, action_state_times, action_state_values
+
+def analyzeSpeed(action_time, action_value, longest_pos, state_time, state_value):
+	global task_direction,task_type
+	action_value_acc = []
+	if task_type == SCROLL:
+		direction = 1 if task_direction==DOWNWARDS else -1
+		t = 0
+		for i in action_value:
+			t += i
+			action_value_acc.append(t*direction)
+	else:
+		action_value_acc = action_value
 	# get speed
-	smooth_action_speed = [0]
-	smooth_speed_w = 10
-	l_action = len(action_time)
-	for i in range(1, l_action):
-		left = max(i-smooth_speed_w, 0)
-		right = min(l_action-1, i+smooth_speed_w)
-		smooth_action_speed.append( (1 if task_direction==DOWNWARDS else -1)* ( (action_value[right] - action_value[left])/(action_time[right] - action_time[left] + 0.0) ))
+	alpha = 0.8
+	smooth_action_speed = [(action_value_acc[1] - action_value_acc[0]) / (action_time[1] - action_time[0] + 0.0)]
+	for i in range(1, len(action_time)): 
+		speed = (action_value_acc[i] - action_value_acc[i-1]) / (action_time[i] - action_time[i-1] + 0.0)
+		smooth_action_speed.append(smooth_action_speed[-1]*alpha + (1-alpha) * speed)
 
-	action_max_speed = max(smooth_action_speed)
-	# find lag speed
-	# lag_speed = []
-	# for lag_pos in lag_positions:
-	# 	pos = len([i for i in action_time if i <= lag_pos]) - 1
-	# 	lag_speed.append(action_speed[pos])
+	max_speed = max(smooth_action_speed)
 
-	lag_display_indexes = []
-	lag_state_indexes = []
-	longest_lag_display_index = 0
-	longest_lag_state_index = 0
-	for lag_pos in lag_positions:
-		lag_display_indexes.append(len([i for i in display_times if i <= lag_pos]) - 1)
-		lag_state_indexes.append(len([i for i in scroll_state_times if i <= lag_pos]) - 1)
-		if longgest_pos == lag_pos:
-			longest_lag_display_index = lag_display_indexes[-1]
-			longest_lag_state_index = lag_state_indexes[-1]
+	if longest_pos == 0:
+		return max_speed, 'None', -1, -1
 
-	out.write(str(action_max_speed)+',')
-	out.write(str(smooth_action_speed[lag_display_indexes[0] - display_start_index])+',')
-	out.write(str(smooth_action_speed[longest_lag_display_index - display_start_index])+',')
-	state = scroll_states[lag_state_indexes[0]]
-	out.write(('touch' if state==TOUCH else ('fling' if state==FLING else 'idle'))+',')
-	state = scroll_states[longest_lag_state_index]
-	out.write(('touch' if state==TOUCH else ('fling' if state==FLING else 'idle'))+',')
+	longest_speed = smooth_action_speed[len([i for i in action_time if i <= longest_pos]) - 1]
+	state = state_value[len([i for i in state_time if i <= longest_pos]) - 1]
+	longest_state = ('touch' if state==TOUCH else ('fling' if state==FLING else 'idle'))
+	longest_value = action_value[len([i for i in action_time if i <= longest_pos]) - 1]
 
 	# draw pic
-	if DRAW: 
-		temp = action_time[0]
-		action_time = [(i - temp) for i in action_time]
-		plt.subplot(2,1,image_count)
-		plt.scatter(action_time,action_value, s=1, c='g')  
-		plt.subplot(2,1,image_count+1)	
+	if DRAW and task_type == SCROLL: 
+		plt.subplot(2,1,1)
+		plt.scatter(action_time,action_value_acc, s=1, c='g')  
+		plt.subplot(2,1,2)	
 		plt.scatter(action_time,smooth_action_speed, s=1, c='r')  
 		# action_lag_start = [i - temp for i in lag_positions]
 		# action_lag_end = [(lag_positions[i] + lag_times[i] - temp) for i in range(len(lag_positions))]
 		# plt.scatter(action_lag_start,0,c = 'r')
 		# plt.scatter(action_lag_end,0,c = 'g')
+
+	return max_speed, longest_speed, longest_state, longest_value
 
 def analyzeOpen(scroll_result):
 	lag_positions = scroll_result['actual lag positions']
@@ -183,46 +155,83 @@ def analyzeSwipe(scroll_result):
 	plt.show()
 
 def main():
-	global out, participant_age, participant_gender
-	global image_count
-	image_count = 1
-	f_count = 0
+	global line
+	global task_direction, task_type
 	out = open(output,'w')
-	out.write('id,age,gender,type,direction,ov_feedback,have lag,feedback,positions,times,total time,num of lags,longest position,longest time,fastest speed,lag first speed,lag longest speed,lag first state,lag longest state,\n')
+	out.write(','.join(colNames) + '\n')
+
 	for files in os.walk(filepath):
 		for filename in files[2]:
 			if not filename.endswith('.json'): continue
 			print filename
+			line[colNames.index('filename')] = filename
+			# read file
 			file = open(files[0] + filename , 'r')
 			file_json = json.loads(file.read())
-			participant_age = file_json['participant-age']
-			participant_gender = file_json['participant-gender']
+			line[colNames.index('age')] = file_json['participant-age']
+			line[colNames.index('gender')] = file_json['participant-gender']
+			line[colNames.index('contact')] = file_json['participant-contact'] if file_json.has_key('participant-contact') else 'none'
+			line[colNames.index('screen x')] = 0 # file_json['screenSize'][0]
+			line[colNames.index('screen y')] = 0 # file_json['screenSize'][1]
 			results = file_json['results']
-			scroll_flag = True
-			person_count = 0
+			scroll_flag = True # for huawei
+			open_flag = True
+			swipe_flag = True
 			for result in results:
 				task_type = result['task type']
-				if task_type == 0: # scroll
+				line[colNames.index('type')] = task_type
+				line[colNames.index('task id')] = result['task id']
+				line[colNames.index('direction')] = result['task direction'] # for huawei
+				task_direction = result['task direction']
+				line[colNames.index('speed')] = 0 # result['task speed']
+				line[colNames.index('lag type')] = 0 # result['lag type']
+				experience,havelag,rate = result['feedback'].split(',')
+				line[colNames.index('experience')] = experience
+				line[colNames.index('have lag')] = havelag
+				line[colNames.index('rate')] = rate
+				lag_positions = result['actual lag positions'] if result.has_key('actual lag times') else [] # for huawei
+				lag_times = result['actual lag times'] if result.has_key('actual lag times') else []
+				line[colNames.index('positions')] = '\"%s\"' % str(lag_positions)
+				line[colNames.index('times')] = '\"%s\"' % str(lag_times)
+				line[colNames.index('redos')] = 0 # result['num_of_redos']
+				line[colNames.index('total time')] = sum(lag_times)
+
+				num_of_lags = len(lag_times)
+				line[colNames.index('num of lags')] = num_of_lags
+				longest_time = max(lag_times) if num_of_lags > 0 else 0
+				line[colNames.index('longest time')] = longest_time
+				longest_pos = lag_positions[lag_times.index(longest_time)] if num_of_lags > 0 else 0
+				display_times, display_values = deduplicate(result['display time'], result['display value'])
+				state_values = result['scroll state'] if result.has_key('scroll state') else []
+				state_times = result['scroll state time'] if result.has_key('scroll state time') else []
+
+				if DRAW:
+					if task_type == SCROLL: f1 = plt.figure(filename[-12:-5] + ' : ' + str(line[colNames.index('task id')]))
+
+				if task_type == 0: # for huawei
 					if scroll_flag:
 						scroll_flag = False
 						continue
-					if DRAW:
-						f1 = plt.figure(f_count)  
-					analyzeScroll(result)
-					out.write('\n')
-					person_count += 1
-					if DRAW:
-						f_count += 1
-						if f_count % 4 == 0:
-							break
-						f1 = plt.figure(f_count) 
-					# break
-				elif task_type == 1:# open
-					continue
-				else:
-					continue
+					if num_of_lags > 0:
+						display_times, display_values, state_times, state_values = trim(display_times, display_values, state_times, state_values, lag_positions, lag_times) 
+				elif task_type == SWIPE:
+					if swipe_flag:
+						swipe_flag = False
+						continue
+				elif task_type == OPEN:
+					if open_flag:
+						open_flag = False
+						continue
+
+				fastestSpeed, longestSpeed, longestState, longestValue = analyzeSpeed(display_times, display_values, longest_pos, state_times, state_values) if task_type != OPEN else ('None','None',-1,-1)
+				line[colNames.index('fastest speed')] = fastestSpeed
+				line[colNames.index('longest speed')] = longestSpeed
+				line[colNames.index('longest state')] = longestState
+				line = [str(i) for i in line]
+				out.write(','.join(line) + '\n')
+				# if task_type == SCROLL:
+				# 	break
 			# break
-			print person_count
 		break
 	out.close()
 	if DRAW: plt.show()
