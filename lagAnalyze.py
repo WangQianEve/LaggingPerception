@@ -18,7 +18,7 @@ colNames = ['filename','device name','android version','age','gender','gesture',
 line = [None for i in colNames]
 
 DEBUG = False
-DRAW = True
+DRAW = False
 
 # constants
 DOWNWARDS = 'Down/Right'
@@ -69,6 +69,11 @@ def trim(display_times, display_values, state_times, state_values, target_start,
 
 	return action_time, action_value, action_state_times, action_state_values
 
+def smooth(y, box_pts):
+    box = numpy.ones(box_pts)/box_pts
+    y_smooth = numpy.convolve(y, box, mode='same')
+    return y_smooth
+
 def analyzeSpeed(action_time, action_value, longest_pos, state_time, state_value):
 	global task_direction, task_type, file_name, task_id
 	action_value_acc = []
@@ -84,17 +89,18 @@ def analyzeSpeed(action_time, action_value, longest_pos, state_time, state_value
 
 	# get speed
 	alpha = 0.8
-	action_speed = [(action_value_acc[i] - action_value_acc[i-1]) / (action_time[i] - action_time[i-1] + 0.0) for i in range(1, len(action_time))]
+	width = 2
+	l = len(action_time)
+	action_speed = [(action_value_acc[i] - action_value_acc[i-1]) / (action_time[i] - action_time[i-1] + 0.0) for i in range(1, l)]
 	action_speed.insert(0,action_speed[0])
 	average = numpy.mean(action_speed)
 	std = numpy.std(action_speed)
-	smooth_action_speed = [action_speed[0] if abs(action_speed[0] - average) <= 2*std else average]
-	for i in range(1, len(action_speed)): 
+	smooth_action_speed = list(action_speed)
+	for i in range(l): 
 		speed = action_speed[i]
 		if abs(speed - average) > 2*std:
-			smooth_action_speed.append(smooth_action_speed[-1])
-		else:
-			smooth_action_speed.append(alpha * smooth_action_speed[-1] + (1-alpha) * speed)
+			smooth_action_speed[i] = smooth_action_speed[i-1] if i>0 else 0
+	smooth_action_speed = [numpy.mean(smooth_action_speed[max(0,i - width):min(l, i+width+1)]) for i in range(l)]
 
 	max_speed = max(smooth_action_speed)
 
@@ -112,7 +118,7 @@ def analyzeSpeed(action_time, action_value, longest_pos, state_time, state_value
 		plt.subplot(2,1,1)
 		plt.scatter(action_time,action_value_acc, s=1, c='g')
 		plt.subplot(2,1,2)
-		plt.scatter(action_time,smooth_action_speed, s=1, c='r')
+		plt.scatter(action_time,smooth_action_speed, s=1, c='g')
 		# plt.scatter(action_time,action_speed, s=1, c='b')
 		# plt.subplot(2,1,3)
 		# action_lag_start = [i - temp for i in lag_positions]
