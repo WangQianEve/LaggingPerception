@@ -9,7 +9,7 @@ filepath = "./data/pilot2-test/"
 output = 'pilot-test.csv'
 
 colNames = ['filename','device name','android version','age','gender','gesture','contact','screen size',
-			'type','direction','speed','task id','lag type',
+			'type','direction','speed','task id','lag type','action time',
 			'redos','total time','num of lags','longest time',
 			'fastest speed','longest speed','longest state',
 			'experience','have lag','rate',
@@ -223,17 +223,20 @@ def main():
 				state_times = result['scroll state time']
 
 				if task_type == SWIPE:
-					last_touch_index = [i for i in range(len(state_values)) if state_values[i] == TOUCH][-1]
-					target_start = state_times[last_touch_index]
-					first_idle_after_touch = [i for i in range(last_touch_index,len(state_values)) if state_values[i] == IDLE][0]
-					target_end = state_times[first_idle_after_touch]
+					idles = [i for i in range(len(state_values)) if state_values[i] == IDLE]
+					last_idle_index = idles[-2]
+					target_end = state_times[last_idle_index]
+					if len(idles) > 2:
+						state_times[idles[-3] + 1]
+					else:
+						target_start = state_times[0]
 					display_times, display_values, state_times, state_values = trim(display_times, display_values, state_times, state_values, target_start, target_end) 
 				elif task_type == SCROLL and num_of_lags > 0:
 					target_start = lag_positions[0]
 					target_end = lag_positions[-1] + lag_times[-1]
 					display_times, display_values, state_times, state_values = trim(display_times, display_values, state_times, state_values, target_start, target_end) 						
 
-				print task_type + ',' + task_direction + ' : ' + str(display_times[-1] - display_times[0])
+				line[colNames.index('action time')] = display_times[-1] - display_times[0]
 				fastestSpeed, longestSpeed, longestState, longestValue = analyzeSpeed(display_times, display_values, longest_pos, state_times, state_values) if task_type != 'Open App' else ('Open App','Open App','Open App',len([i for i in display_times if i <= longest_pos])/19.0)
 				line[colNames.index('fastest speed')] = fastestSpeed
 				line[colNames.index('longest speed')] = longestSpeed
