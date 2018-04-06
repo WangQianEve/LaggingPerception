@@ -223,13 +223,16 @@ def main():
 				state_times = result['scroll state time']
 
 				if task_type == SWIPE:
+					# print state_times
+					# print state_values
 					idles = [i for i in range(len(state_values)) if state_values[i] == IDLE]
 					last_idle_index = idles[-2]
 					target_end = state_times[last_idle_index]
 					if len(idles) > 2:
-						state_times[idles[-3] + 1]
+						target_start = state_times[idles[-3] + 1]
 					else:
 						target_start = state_times[0]
+					# print target_start + ',' + target_end
 					display_times, display_values, state_times, state_values = trim(display_times, display_values, state_times, state_values, target_start, target_end) 
 				elif task_type == SCROLL and num_of_lags > 0:
 					target_start = lag_positions[0]
